@@ -1,0 +1,6 @@
+{
+  "name": "AL-Hidayah",
+  "description": "Aplikasi penghubung orang tua santri dengan guru di Masjid Al-Hidayah Kp. Ciloa untuk pelaporan aktivitas ibadah harian santri di rumah.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
