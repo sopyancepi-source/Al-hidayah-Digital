@@ -27,6 +27,9 @@ interface SantriDao {
 
     @Delete
     suspend fun deleteSantri(santri: Santri)
+
+    @Query("DELETE FROM santri")
+    suspend fun deleteAllSantri()
 }
 
 @Dao
@@ -45,12 +48,18 @@ interface ReportDao {
 
     @Update
     suspend fun updateReport(report: Report)
+
+    @Query("DELETE FROM reports")
+    suspend fun deleteAllReports()
 }
 
 @Dao
 interface AppConfigDao {
     @Query("SELECT * FROM app_config WHERE id = 1 LIMIT 1")
     suspend fun getConfig(): AppConfig?
+
+    @Query("SELECT * FROM app_config WHERE id = 1 LIMIT 1")
+    fun getConfigFlow(): Flow<AppConfig?>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertConfig(config: AppConfig)
@@ -72,6 +81,9 @@ interface AttendanceDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAllAttendance(attendances: List<Attendance>)
+
+    @Query("DELETE FROM attendance")
+    suspend fun deleteAllAttendance()
 }
 
 @Dao
@@ -111,5 +123,8 @@ interface WeeklyReportDao {
 
     @Update
     suspend fun updateWeeklyReport(weeklyReport: WeeklyReport)
+
+    @Query("DELETE FROM weekly_reports")
+    suspend fun deleteAllWeeklyReports()
 }
 

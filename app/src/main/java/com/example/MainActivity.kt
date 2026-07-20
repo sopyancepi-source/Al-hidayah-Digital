@@ -92,7 +92,7 @@ fun MainAppScreen() {
             ) { (role, authed, form) ->
                 when {
                     role == Role.NONE -> {
-                        RoleSelectionScreen(onRoleSelected = { viewModel.selectRole(it) })
+                        RoleSelectionScreen(viewModel = viewModel, onRoleSelected = { viewModel.selectRole(it) })
                     }
                     !authed -> {
                         PinVerificationScreen(
@@ -145,16 +145,23 @@ fun AppFooter() {
     }
 }
 
-// 1. Role Selection Screen (Vibrant and Colorful)
+// 1. Role Selection Screen (Vibrant, Scrollable, and Connected)
 @Composable
-fun RoleSelectionScreen(onRoleSelected: (Role) -> Unit) {
+fun RoleSelectionScreen(viewModel: AlHidayahViewModel, onRoleSelected: (Role) -> Unit) {
+    val appConfig by viewModel.appConfig.collectAsStateWithLifecycle()
+    val isSyncing by viewModel.isSyncing.collectAsStateWithLifecycle()
+    val syncProgress by viewModel.syncProgress.collectAsStateWithLifecycle()
+    var showConnectDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFFF5F7F8))
+            .verticalScroll(rememberScrollState())
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.Top
     ) {
         // Decorative Hero Banner
         Box(
@@ -189,7 +196,86 @@ fun RoleSelectionScreen(onRoleSelected: (Role) -> Unit) {
             }
         }
 
-        Spacer(modifier = Modifier.height(28.dp))
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Connection Status Card
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = if (appConfig.firebaseUrl.isNotEmpty() && appConfig.firebaseEnabled) 
+                    Color(0xFFE0F2F1) else Color(0xFFECEFF1)
+            ),
+            border = BorderStroke(
+                width = 1.dp,
+                color = if (appConfig.firebaseUrl.isNotEmpty() && appConfig.firebaseEnabled) 
+                    Color(0xFF00695C).copy(alpha = 0.2f) else Color.Gray.copy(alpha = 0.2f)
+            )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Icon(
+                        imageVector = if (isSyncing) Icons.Default.Sync
+                            else if (appConfig.firebaseUrl.isNotEmpty() && appConfig.firebaseEnabled) 
+                            Icons.Default.CloudDone else Icons.Default.CloudOff,
+                        contentDescription = "Database Connection Status",
+                        tint = if (isSyncing) Color(0xFFEF6C00)
+                            else if (appConfig.firebaseUrl.isNotEmpty() && appConfig.firebaseEnabled) 
+                            Color(0xFF00695C) else Color.Gray,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = if (isSyncing) "SINKRONISASI DATA..."
+                                else if (appConfig.firebaseUrl.isNotEmpty() && appConfig.firebaseEnabled) 
+                                "Koneksi: TERHUBUNG" else "Koneksi: OFFLINE (LOKAL)",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isSyncing) Color(0xFFEF6C00)
+                                else if (appConfig.firebaseUrl.isNotEmpty() && appConfig.firebaseEnabled) 
+                                Color(0xFF004D40) else Color.DarkGray
+                        )
+                        Text(
+                            text = if (isSyncing) syncProgress
+                                else if (appConfig.firebaseUrl.isNotEmpty() && appConfig.firebaseEnabled) 
+                                "Otomatis terhubung ke Ustaz" else "Hubungkan agar laporan masuk ke Ustaz",
+                            fontSize = 10.sp,
+                            color = Color.Gray
+                        )
+                    }
+                }
+                
+                Button(
+                    onClick = { showConnectDialog = true },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (appConfig.firebaseUrl.isNotEmpty() && appConfig.firebaseEnabled) 
+                            Color(0xFF00695C) else Color(0xFFEF6C00)
+                    ),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.height(32.dp)
+                ) {
+                    Text(
+                        text = if (appConfig.firebaseUrl.isNotEmpty() && appConfig.firebaseEnabled) 
+                            "Ubah Koneksi" else "Hubungkan 🔗",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         Text(
             text = "Pilih Mode Akses Aplikasi:",
@@ -198,7 +284,7 @@ fun RoleSelectionScreen(onRoleSelected: (Role) -> Unit) {
             color = Color(0xFF1E1E1E),
             modifier = Modifier
                 .align(Alignment.Start)
-                .padding(bottom = 16.dp)
+                .padding(bottom = 12.dp)
         )
 
         // Menu Cards with distinct visual themes to avoid visual boredom
@@ -236,6 +322,89 @@ fun RoleSelectionScreen(onRoleSelected: (Role) -> Unit) {
             containerColor = Color(0xFFFFF3E0),
             accentColor = Color(0xFFEF6C00),
             onClick = { onRoleSelected(Role.ADMIN2) }
+        )
+    }
+
+    if (showConnectDialog) {
+        var firebaseUrlInput by remember { mutableStateOf(appConfig.firebaseUrl) }
+        
+        AlertDialog(
+            onDismissRequest = { if (!isSyncing) showConnectDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("🔗", fontSize = 24.sp, modifier = Modifier.padding(end = 8.dp))
+                    Text("Hubungkan ke Database Ustaz", fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "Masukkan URL Firebase Realtime Database yang diberikan oleh Ustaz agar data laporan harian, absensi, dan data santri tersinkronisasi secara otomatis.",
+                        fontSize = 12.sp,
+                        color = Color.DarkGray
+                    )
+                    
+                    OutlinedTextField(
+                        value = firebaseUrlInput,
+                        onValueChange = { firebaseUrlInput = it },
+                        label = { Text("URL Database Firebase") },
+                        placeholder = { Text("https://nama-database.firebaseio.com/") },
+                        leadingIcon = { Icon(Icons.Default.Link, contentDescription = "Firebase URL", tint = Color(0xFFEF6C00)) },
+                        singleLine = true,
+                        enabled = !isSyncing,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    
+                    if (isSyncing) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.padding(top = 8.dp)
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = Color(0xFFEF6C00))
+                            Text(syncProgress, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = Color(0xFFEF6C00))
+                        }
+                    } else if (appConfig.firebaseUrl.isNotEmpty() && appConfig.firebaseEnabled) {
+                        Text(
+                            "Status saat ini: Terhubung ke database. Jika Anda ingin memutus koneksi, kosongkan URL di atas lalu klik Simpan.",
+                            fontSize = 11.sp,
+                            color = Color(0xFF2E7D32),
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val cleanUrl = firebaseUrlInput.trim()
+                        if (cleanUrl.isNotEmpty() && !cleanUrl.startsWith("https://")) {
+                            Toast.makeText(context, "URL harus diawali dengan https://", Toast.LENGTH_LONG).show()
+                        } else {
+                            viewModel.connectAndSyncFirebase(cleanUrl) { success ->
+                                if (success) {
+                                    Toast.makeText(context, "Database berhasil terhubung dan disinkronkan!", Toast.LENGTH_LONG).show()
+                                    showConnectDialog = false
+                                } else {
+                                    Toast.makeText(context, "Koneksi disimpan, namun gagal mengunduh data dari Firebase. Silakan periksa koneksi internet Anda.", Toast.LENGTH_LONG).show()
+                                    showConnectDialog = false
+                                }
+                            }
+                        }
+                    },
+                    enabled = !isSyncing,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF6C00))
+                ) {
+                    Text(if (isSyncing) "Menghubungkan..." else "Simpan & Sinkronkan", color = Color.White)
+                }
+            },
+            dismissButton = {
+                if (!isSyncing) {
+                    OutlinedButton(onClick = { showConnectDialog = false }) {
+                        Text("Batal")
+                    }
+                }
+            }
         )
     }
 }
@@ -295,6 +464,7 @@ fun PinVerificationScreen(
     viewModel: AlHidayahViewModel,
     onBack: () -> Unit
 ) {
+    val appConfig by viewModel.appConfig.collectAsStateWithLifecycle()
     var enteredPin by remember { mutableStateOf("") }
     val context = LocalContext.current
 
@@ -370,13 +540,15 @@ fun PinVerificationScreen(
                     modifier = Modifier.padding(top = 8.dp)
                 )
             } else if (role == Role.GURU) {
-                Text(
-                    text = "*Gunakan PIN Guru default: 1234",
-                    fontSize = 11.sp,
-                    color = Color(0xFF00695C),
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
+                if (appConfig.guruPin == "1234") {
+                    Text(
+                        text = "*Gunakan PIN Guru default: 1234",
+                        fontSize = 11.sp,
+                        color = Color(0xFF00695C),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
             }
         }
 
@@ -1305,7 +1477,7 @@ fun ParentActivityCard(
 @Composable
 fun GuruDashboardScreen(viewModel: AlHidayahViewModel) {
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Laporan Realtime", "Rekap Laporan", "Evaluasi Mingguan", "Kelola Santri", "Atur PIN")
+    val tabs = listOf("Laporan Realtime", "Rekap Laporan", "Evaluasi Mingguan", "Kelola Santri", "PIN & Firebase")
 
     val reports by viewModel.reportList.collectAsStateWithLifecycle()
     val santriList by viewModel.santriList.collectAsStateWithLifecycle()
@@ -1401,8 +1573,12 @@ fun GuruDashboardScreen(viewModel: AlHidayahViewModel) {
             )
             4 -> GuruAturPinTab(
                 appConfig = appConfig,
+                viewModel = viewModel,
                 onSavePins = { g, a1, a2 ->
                     viewModel.updateSystemPins(g, a1, a2)
+                },
+                onSaveFirebase = { url, enabled ->
+                    viewModel.updateFirebaseConfig(url, enabled)
                 }
             )
         }
@@ -1550,6 +1726,25 @@ fun evaluateReport(r: Report?): ReportEvaluation {
             details = "Error: Laporan kosong"
         )
     }
+
+    val getMinutesFromTime = { timeStr: String? ->
+        if (timeStr != null && timeStr != "Tidak Shalat" && timeStr.isNotEmpty()) {
+            try {
+                val clean = timeStr.substringBefore(" ").trim()
+                val parts = clean.split(":")
+                if (parts.size >= 2) {
+                    val hour = parts[0].toIntOrNull()
+                    val minute = parts[1].toIntOrNull()
+                    if (hour != null && minute != null) {
+                        hour * 60 + minute
+                    } else null
+                } else null
+            } catch (e: Exception) {
+                null
+            }
+        } else null
+    }
+
     return try {
         val temuan = mutableListOf<String>()
         val isHaid = r.isHaid ?: false
@@ -1585,6 +1780,64 @@ fun evaluateReport(r: Report?): ReportEvaluation {
             if (r.asharWaktu == null || r.asharWaktu == "Tidak Shalat") temuan.add("Tidak Shalat Ashar")
             if (r.maghribWaktu == null || r.maghribWaktu == "Tidak Shalat") temuan.add("Tidak Shalat Maghrib")
             if (r.isyaWaktu == null || r.isyaWaktu == "Tidak Shalat") temuan.add("Tidak Shalat Isya")
+            
+            // Check late/out-of-bounds prayer times
+            val subuhMin = getMinutesFromTime(r.subuhWaktu)
+            if (subuhMin != null) {
+                if (subuhMin < 240) { // Before 04:00 AM
+                    temuan.add("Shalat Subuh terlalu awal (${r.subuhWaktu})")
+                } else if (subuhMin > 375) { // After 06:15 AM (Sunrise limit)
+                    if (subuhMin >= 705) { // After 11:45 AM
+                        temuan.add("Shalat Subuh dilaksanakan di waktu Zuhur (${r.subuhWaktu})")
+                    } else {
+                        temuan.add("Shalat Subuh kesiangan/di luar waktu (${r.subuhWaktu})")
+                    }
+                }
+            }
+            
+            val zuhurMin = getMinutesFromTime(r.zuhurWaktu)
+            if (zuhurMin != null) {
+                if (zuhurMin < 705) { // Before 11:45 AM
+                    temuan.add("Shalat Zuhur terlalu awal (${r.zuhurWaktu})")
+                } else if (zuhurMin >= 900) { // After 15:00 PM (Ashar starts)
+                    if (zuhurMin >= 1140) { // After 19:00 PM
+                        temuan.add("Shalat Zuhur dilaksanakan di waktu Isya (${r.zuhurWaktu})")
+                    } else if (zuhurMin >= 1065) { // After 17:45 PM
+                        temuan.add("Shalat Zuhur dilaksanakan di waktu Maghrib (${r.zuhurWaktu})")
+                    } else {
+                        temuan.add("Shalat Zuhur dilaksanakan di waktu Ashar (${r.zuhurWaktu})")
+                    }
+                }
+            }
+            
+            val asharMin = getMinutesFromTime(r.asharWaktu)
+            if (asharMin != null) {
+                if (asharMin < 900) { // Before 15:00 PM
+                    temuan.add("Shalat Ashar terlalu awal (${r.asharWaktu})")
+                } else if (asharMin >= 1065) { // After 17:45 PM (Maghrib starts)
+                    if (asharMin >= 1140) { // After 19:00 PM
+                        temuan.add("Shalat Ashar dilaksanakan di waktu Isya (${r.asharWaktu})")
+                    } else {
+                        temuan.add("Shalat Ashar dilaksanakan di waktu Maghrib (${r.asharWaktu})")
+                    }
+                }
+            }
+            
+            val maghribMin = getMinutesFromTime(r.maghribWaktu)
+            if (maghribMin != null) {
+                if (maghribMin < 1065) { // Before 17:45 PM
+                    temuan.add("Shalat Maghrib terlalu awal (${r.maghribWaktu})")
+                } else if (maghribMin >= 1140) { // After 19:00 PM (Isya starts)
+                    temuan.add("Shalat Maghrib dilaksanakan di waktu Isya (${r.maghribWaktu})")
+                }
+            }
+            
+            val isyaMin = getMinutesFromTime(r.isyaWaktu)
+            if (isyaMin != null) {
+                if (isyaMin in 240..1139) { // 04:00 AM to 18:59 PM (daytime)
+                    temuan.add("Shalat Isya dilaksanakan di luar waktu (${r.isyaWaktu})")
+                }
+            }
             
             val missingQuran = r.quranSurat.isNullOrEmpty() && r.iqroJilid.isNullOrEmpty()
             if (missingQuran) {
@@ -2639,15 +2892,34 @@ fun GuruKelolaSantriTab(
     }
 }
 
-// 5c. Atur PIN Tab Composable
+// 5c. Atur PIN & Firebase Tab Composable
 @Composable
 fun GuruAturPinTab(
     appConfig: com.example.data.AppConfig,
-    onSavePins: (String, String, String) -> Unit
+    viewModel: com.example.ui.viewmodel.AlHidayahViewModel,
+    onSavePins: (String, String, String) -> Unit,
+    onSaveFirebase: (String, Boolean) -> Unit
 ) {
     var guruPinInput by remember { mutableStateOf(appConfig.guruPin) }
     var admin1PinInput by remember { mutableStateOf(appConfig.admin1Pin) }
     var admin2PinInput by remember { mutableStateOf(appConfig.admin2Pin) }
+    
+    // Firebase states
+    var firebaseUrlInput by remember { 
+        mutableStateOf(
+            if (appConfig.firebaseUrl.isEmpty()) com.example.data.FirebaseSyncManager.DEFAULT_FIREBASE_URL else appConfig.firebaseUrl
+        ) 
+    }
+    var firebaseEnabledInput by remember { 
+        mutableStateOf(
+            if (appConfig.firebaseUrl.isEmpty()) com.example.data.FirebaseSyncManager.DEFAULT_FIREBASE_ENABLED else appConfig.firebaseEnabled
+        ) 
+    }
+    
+    val syncProgress by viewModel.syncProgress.collectAsStateWithLifecycle()
+    val isSyncing by viewModel.isSyncing.collectAsStateWithLifecycle()
+    var showDeleteConfirmationDialog by remember { mutableStateOf(false) }
+    
     val context = LocalContext.current
 
     Column(
@@ -2700,7 +2972,7 @@ fun GuruAturPinTab(
             modifier = Modifier.fillMaxWidth()
         )
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(4.dp))
 
         Button(
             onClick = {
@@ -2721,6 +2993,276 @@ fun GuruAturPinTab(
             Spacer(modifier = Modifier.width(8.dp))
             Text("SIMPAN SEMUA PIN PORTAL", fontWeight = FontWeight.Bold)
         }
+
+        HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+        // Section 2: Firebase Realtime Database Config
+        Card(
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFEF6C00).copy(alpha = 0.08f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("🔥", fontSize = 32.sp, modifier = Modifier.padding(end = 12.dp))
+                Column {
+                    Text("Firebase Realtime Database", fontWeight = FontWeight.Bold, color = Color(0xFFEF6C00))
+                    Text("Hubungkan aplikasi ini ke database Firebase Anda sendiri untuk sinkronisasi data antar perangkat.", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Aktifkan Sinkronisasi Firebase", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Text("Kirim/unduh data secara otomatis ke Firebase", fontSize = 12.sp, color = Color.Gray)
+            }
+            Switch(
+                checked = firebaseEnabledInput,
+                onCheckedChange = { firebaseEnabledInput = it },
+                colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFFEF6C00), checkedTrackColor = Color(0xFFEF6C00).copy(alpha = 0.5f))
+            )
+        }
+
+        OutlinedTextField(
+            value = firebaseUrlInput,
+            onValueChange = { firebaseUrlInput = it },
+            label = { Text("URL Firebase Realtime Database") },
+            placeholder = { Text("https://nama-project-default-rtdb.firebaseio.com/") },
+            leadingIcon = { Icon(Icons.Default.Link, contentDescription = "Firebase URL", tint = Color(0xFFEF6C00)) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Button(
+            onClick = {
+                val cleanUrl = firebaseUrlInput.trim()
+                if (cleanUrl.isNotEmpty() && !cleanUrl.startsWith("https://")) {
+                    Toast.makeText(context, "URL Firebase harus diawali dengan https://", Toast.LENGTH_LONG).show()
+                } else {
+                    onSaveFirebase(cleanUrl, firebaseEnabledInput)
+                    Toast.makeText(context, "Konfigurasi Firebase berhasil disimpan!", Toast.LENGTH_SHORT).show()
+                }
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF6C00)),
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(50.dp)
+        ) {
+            Icon(Icons.Default.Cloud, contentDescription = "Cloud")
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("SIMPAN KONFIGURASI FIREBASE", fontWeight = FontWeight.Bold)
+        }
+
+        if (appConfig.firebaseUrl.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            Button(
+                onClick = {
+                    val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    val clip = android.content.ClipData.newPlainText(
+                        "Al-Hidayah Database URL",
+                        """
+                        *KONEKSI APLIKASI AL-HIDAYAH HUB*
+                        
+                        Bapak/Ibu Wali Santri, silakan hubungkan aplikasi Al-Hidayah Anda ke database pusat dengan menyalin link di bawah ini:
+                        
+                        URL Database:
+                        ${appConfig.firebaseUrl}
+                        
+                        Langkah-langkah:
+                        1. Buka aplikasi Al-Hidayah Hub di HP Anda.
+                        2. Di halaman awal, klik tombol "Hubungkan 🔗" di bagian kanan atas bar koneksi.
+                        3. Tempelkan/paste URL di atas ke dalam kolom yang tersedia.
+                        4. Klik "Simpan & Sinkronkan".
+                        5. Selesai! Data nama anak, PIN, dan laporan akan terhubung langsung ke Ustaz secara realtime.
+                        """.trimIndent()
+                    )
+                    clipboard.setPrimaryClip(clip)
+                    Toast.makeText(context, "Petunjuk & URL berhasil disalin! Silakan bagikan ke WhatsApp Orang Tua Santri.", Toast.LENGTH_LONG).show()
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00796B)),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(45.dp)
+            ) {
+                Icon(Icons.Default.Share, contentDescription = "Share Config", tint = Color.White)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("SALIN PETUNJUK & URL WALI SANTRI", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.White)
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("Aksi Sinkronisasi Manual:", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+
+            Card(
+                shape = RoundedCornerShape(8.dp),
+                border = BorderStroke(1.dp, Color.LightGray),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "Gunakan aksi di bawah untuk melakukan backup data ke Firebase atau restore data ke perangkat baru ini.",
+                        fontSize = 12.sp,
+                        color = Color.DarkGray
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                viewModel.triggerFullUpload { success ->
+                                    if (success) {
+                                        Toast.makeText(context, "Berhasil mengunggah semua data lokal ke Firebase!", Toast.LENGTH_LONG).show()
+                                    } else {
+                                        Toast.makeText(context, "Gagal mengunggah data. Silakan periksa URL dan koneksi Anda.", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            },
+                            enabled = !isSyncing,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Text("Backup Ke Firebase", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        Button(
+                            onClick = {
+                                viewModel.triggerFullDownload { success ->
+                                    if (success) {
+                                        Toast.makeText(context, "Berhasil mengunduh dan menyinkronkan data dari Firebase!", Toast.LENGTH_LONG).show()
+                                    } else {
+                                        Toast.makeText(context, "Gagal mengunduh data. Silakan periksa URL dan aturan kemanan (Security Rules) Firebase Anda.", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            },
+                            enabled = !isSyncing,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1565C0)),
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Text("Restore Dari Firebase", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    if (isSyncing) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(
+                                color = Color(0xFFEF6C00),
+                                modifier = Modifier.size(24.dp).padding(end = 8.dp)
+                            )
+                            Text(syncProgress, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Color(0xFFEF6C00))
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+        
+        Card(
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.Red.copy(alpha = 0.06f)),
+            border = BorderStroke(1.dp, Color.Red.copy(alpha = 0.2f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("⚠️", fontSize = 24.sp, modifier = Modifier.padding(end = 8.dp))
+                    Text("Zona Bahaya (Pembersihan Data)", fontWeight = FontWeight.Bold, color = Color.Red)
+                }
+                
+                Text(
+                    "Gunakan fitur ini secara berkala untuk menghapus laporan mingguan, laporan harian, dan absensi lama agar kuota database Firebase Realtime gratisan Anda tidak penuh (kuota gratis terbatas 1GB).",
+                    fontSize = 12.sp,
+                    color = Color.DarkGray
+                )
+                
+                Button(
+                    onClick = { showDeleteConfirmationDialog = true },
+                    enabled = !isSyncing,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Delete, contentDescription = "Clear Data", tint = Color.White)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("HAPUS SEMUA LAPORAN & ABSENSI", fontWeight = FontWeight.Bold, color = Color.White)
+                }
+            }
+        }
+    }
+
+    if (showDeleteConfirmationDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmationDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("⚠️", fontSize = 24.sp, modifier = Modifier.padding(end = 8.dp))
+                    Text("Konfirmasi Hapus Data", fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Tindakan ini akan menghapus data berikut secara permanen:",
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text("• Seluruh Laporan Harian Santri (termasuk foto-foto)", fontSize = 13.sp)
+                    Text("• Seluruh Catatan Absensi", fontSize = 13.sp)
+                    Text("• Seluruh Laporan Evaluasi Mingguan/Bulanan", fontSize = 13.sp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "Data tersebut akan dihapus secara permanen baik di HP ini maupun di Firebase Realtime Database Anda (jika terhubung). Ini sangat berguna untuk mengosongkan kuota Firebase Gratisan Anda.",
+                        fontSize = 12.sp,
+                        color = Color.Gray
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "Catatan: Data profil Santri dan Periode Evaluasi TIDAK akan dihapus, sehingga Anda tidak perlu mendaftarkan santri ulang.",
+                        fontSize = 12.sp,
+                        color = Color.DarkGray,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteConfirmationDialog = false
+                        viewModel.triggerClearWeeklyAndDailyData { success ->
+                            if (success) {
+                                Toast.makeText(context, "Pembersihan data berhasil dilakukan!", Toast.LENGTH_LONG).show()
+                            } else {
+                                Toast.makeText(context, "Pembersihan data lokal berhasil, namun gagal menghapus di Firebase. Silakan periksa koneksi internet Anda.", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                ) {
+                    Text("Ya, Hapus Permanen", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { showDeleteConfirmationDialog = false }
+                ) {
+                    Text("Batal")
+                }
+            }
+        )
     }
 }
 

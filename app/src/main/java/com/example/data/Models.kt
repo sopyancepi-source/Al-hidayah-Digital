@@ -16,7 +16,9 @@ data class AppConfig(
     @PrimaryKey val id: Int = 1,
     val guruPin: String = "1234",
     val admin1Pin: String = "1111",
-    val admin2Pin: String = "2222"
+    val admin2Pin: String = "2222",
+    val firebaseUrl: String = "https://alhidayah-82b02-default-rtdb.asia-southeast1.firebasedatabase.app/",
+    val firebaseEnabled: Boolean = true
 )
 
 @Entity(tableName = "reports")

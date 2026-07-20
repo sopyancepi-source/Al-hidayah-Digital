@@ -13,6 +13,7 @@ class AlHidayahRepository(
 ) {
     val allSantri: Flow<List<Santri>> = santriDao.getAllSantri()
     val allReports: Flow<List<Report>> = reportDao.getAllReports()
+    val appConfigFlow: Flow<AppConfig?> = appConfigDao.getConfigFlow()
 
     // Evaluation Period APIs
     val allPeriods: Flow<List<EvaluationPeriod>> = evaluationPeriodDao.getAllPeriods()
@@ -110,6 +111,10 @@ class AlHidayahRepository(
         santriDao.deleteSantri(santri)
     }
 
+    suspend fun deleteAllSantri() {
+        santriDao.deleteAllSantri()
+    }
+
     suspend fun getConfig(): AppConfig {
         var config = appConfigDao.getConfig()
         if (config == null) {
@@ -143,6 +148,14 @@ class AlHidayahRepository(
                 )
             }
         } else {
+            // Check if URL is empty or blank, then automatically fill and enable it
+            if (config.firebaseUrl.trim().isEmpty()) {
+                config = config.copy(
+                    firebaseUrl = "https://alhidayah-82b02-default-rtdb.asia-southeast1.firebasedatabase.app/",
+                    firebaseEnabled = true
+                )
+                appConfigDao.updateConfig(config)
+            }
             // Also ensure we have a period even if config was loaded
             val existingPeriods = evaluationPeriodDao.getAllPeriods().firstOrNull()
             if (existingPeriods.isNullOrEmpty()) {
@@ -166,5 +179,11 @@ class AlHidayahRepository(
 
     suspend fun updateConfig(config: AppConfig) {
         appConfigDao.updateConfig(config)
+    }
+
+    suspend fun clearAllLocalReportsAndAttendance() {
+        reportDao.deleteAllReports()
+        attendanceDao.deleteAllAttendance()
+        weeklyReportDao.deleteAllWeeklyReports()
     }
 }

@@ -11,6 +11,8 @@ import com.example.data.Santri
 import com.example.data.Attendance
 import com.example.data.EvaluationPeriod
 import com.example.data.WeeklyReport
+import com.example.data.FirebaseSyncManager
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -76,9 +78,39 @@ class AlHidayahViewModel(application: Application) : AndroidViewModel(applicatio
         // Initialize date to today
         _selectedDateString.value = getTodayDateString()
         
-        // Load configuration on startup
+        // Observe config changes in real-time from database (including those updated via FirebaseSyncManager)
         viewModelScope.launch {
-            _appConfig.value = repository.getConfig()
+            repository.appConfigFlow.collect { config ->
+                if (config != null) {
+                    _appConfig.value = config
+                }
+            }
+        }
+        
+        // Load configuration on startup and run background auto-sync & realtime listener
+        viewModelScope.launch {
+            val config = repository.getConfig()
+            _appConfig.value = config
+            if (config.firebaseUrl.isNotEmpty() && config.firebaseEnabled) {
+                // Mulai real-time listener agar perubahan di Firebase langsung tersinkron ke HP lain secara realtime
+                FirebaseSyncManager.startRealtimeSync(application, config.firebaseUrl, repository)
+                
+                _isSyncing.value = true
+                _syncProgress.value = "Sinkronisasi otomatis..."
+                try {
+                    FirebaseSyncManager.fullDownload(
+                        application,
+                        config.firebaseUrl,
+                        repository
+                    ) { progress ->
+                        _syncProgress.value = progress
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("AlHidayahViewModel", "Auto sync failed: ${e.message}")
+                } finally {
+                    _isSyncing.value = false
+                }
+            }
         }
     }
 
@@ -114,20 +146,25 @@ class AlHidayahViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun saveAttendance(santriId: Int, name: String, dateStr: String, status: String) {
         viewModelScope.launch {
-            repository.saveAttendance(
-                Attendance(
-                    santriId = santriId,
-                    santriName = name,
-                    date = dateStr,
-                    status = status
-                )
+            val attendance = Attendance(
+                santriId = santriId,
+                santriName = name,
+                date = dateStr,
+                status = status
             )
+            repository.saveAttendance(attendance)
+            val config = _appConfig.value
+            FirebaseSyncManager.syncAttendance(getApplication(), config.firebaseUrl, config.firebaseEnabled, attendance)
         }
     }
 
     fun saveAllAttendance(list: List<Attendance>) {
         viewModelScope.launch {
             repository.saveAllAttendance(list)
+            val config = _appConfig.value
+            list.forEach {
+                FirebaseSyncManager.syncAttendance(getApplication(), config.firebaseUrl, config.firebaseEnabled, it)
+            }
         }
     }
 
@@ -199,7 +236,12 @@ class AlHidayahViewModel(application: Application) : AndroidViewModel(applicatio
                     date = dateStr
                 )
                 val id = repository.insertReport(newReport)
-                _parentReport.value = newReport.copy(id = id.toInt())
+                val finalReport = newReport.copy(id = id.toInt())
+                _parentReport.value = finalReport
+                
+                // Sync to Firebase
+                val config = _appConfig.value
+                FirebaseSyncManager.syncReport(getApplication(), config.firebaseUrl, config.firebaseEnabled, finalReport)
             }
         }
     }
@@ -279,6 +321,10 @@ class AlHidayahViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             repository.updateReport(updated)
             _activeForm.value = null // Close the form and return to original menu
+            
+            // Sync to Firebase
+            val config = _appConfig.value
+            FirebaseSyncManager.syncReport(getApplication(), config.firebaseUrl, config.firebaseEnabled, updated)
         }
     }
 
@@ -292,18 +338,158 @@ class AlHidayahViewModel(application: Application) : AndroidViewModel(applicatio
             )
             repository.updateConfig(updatedConfig)
             _appConfig.value = updatedConfig
+            
+            // Sync updated PINs to Firebase so other devices receive them instantly
+            FirebaseSyncManager.syncSystemPins(
+                getApplication(),
+                updatedConfig.firebaseUrl,
+                updatedConfig.firebaseEnabled,
+                newGuruPin,
+                newAdmin1Pin,
+                newAdmin2Pin
+            )
+        }
+    }
+
+    fun updateFirebaseConfig(url: String, enabled: Boolean) {
+        viewModelScope.launch {
+            val updatedConfig = _appConfig.value.copy(
+                firebaseUrl = url,
+                firebaseEnabled = enabled
+            )
+            repository.updateConfig(updatedConfig)
+            _appConfig.value = updatedConfig
+            if (enabled && url.isNotEmpty()) {
+                FirebaseSyncManager.startRealtimeSync(getApplication(), url, repository)
+            } else {
+                FirebaseSyncManager.stopRealtimeSync()
+            }
+        }
+    }
+
+    private val _syncProgress = MutableStateFlow("")
+    val syncProgress: StateFlow<String> = _syncProgress.asStateFlow()
+
+    private val _isSyncing = MutableStateFlow(false)
+    val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
+
+    fun triggerFullUpload(onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            _isSyncing.value = true
+            _syncProgress.value = "Menghubungkan ke Firebase..."
+            val success = FirebaseSyncManager.fullUpload(
+                getApplication(),
+                _appConfig.value.firebaseUrl,
+                repository
+            ) { progress ->
+                _syncProgress.value = progress
+            }
+            _isSyncing.value = false
+            onResult(success)
+        }
+    }
+
+    fun triggerFullDownload(onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            _isSyncing.value = true
+            _syncProgress.value = "Menghubungkan ke Firebase..."
+            val success = FirebaseSyncManager.fullDownload(
+                getApplication(),
+                _appConfig.value.firebaseUrl,
+                repository
+            ) { progress ->
+                _syncProgress.value = progress
+            }
+            // Refresh parent report if any active santri is set
+            val active = _activeSantri.value
+            if (active != null) {
+                loadOrCreateReport(active.id, active.name, _selectedDateString.value)
+            }
+            _isSyncing.value = false
+            onResult(success)
+        }
+    }
+
+    fun triggerClearWeeklyAndDailyData(onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            _isSyncing.value = true
+            _syncProgress.value = "Memulai pembersihan data..."
+            
+            var firebaseSuccess = true
+            val url = _appConfig.value.firebaseUrl
+            if (url.trim().isNotEmpty()) {
+                _syncProgress.value = "Menghapus data laporan di Firebase..."
+                firebaseSuccess = FirebaseSyncManager.clearFirebaseReportsAndAttendance(
+                    getApplication(),
+                    url
+                ) { progress ->
+                    _syncProgress.value = progress
+                }
+            }
+            
+            _syncProgress.value = "Menghapus data laporan di penyimpanan HP..."
+            repository.clearAllLocalReportsAndAttendance()
+            
+            _isSyncing.value = false
+            onResult(firebaseSuccess)
+        }
+    }
+
+    fun connectAndSyncFirebase(url: String, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            _isSyncing.value = true
+            _syncProgress.value = "Menghubungkan ke database..."
+            
+            val updatedConfig = _appConfig.value.copy(
+                firebaseUrl = url,
+                firebaseEnabled = url.trim().isNotEmpty()
+            )
+            repository.updateConfig(updatedConfig)
+            _appConfig.value = updatedConfig
+            
+            if (url.trim().isNotEmpty()) {
+                // Aktifkan realtime listener
+                FirebaseSyncManager.startRealtimeSync(getApplication(), url, repository)
+                
+                _syncProgress.value = "Mengunduh data dari Firebase..."
+                val success = FirebaseSyncManager.fullDownload(
+                    getApplication(),
+                    url,
+                    repository
+                ) { progress ->
+                    _syncProgress.value = progress
+                }
+                
+                // Refresh parent report if any active santri is set
+                val active = _activeSantri.value
+                if (active != null) {
+                    loadOrCreateReport(active.id, active.name, _selectedDateString.value)
+                }
+                _isSyncing.value = false
+                onResult(success)
+            } else {
+                FirebaseSyncManager.stopRealtimeSync()
+                _isSyncing.value = false
+                onResult(true)
+            }
         }
     }
 
     fun addNewSantri(name: String, pin: String, gender: String) {
         viewModelScope.launch {
-            repository.insertSantri(Santri(name = name, pin = pin, gender = gender))
+            val santri = Santri(name = name, pin = pin, gender = gender)
+            val id = repository.insertSantri(santri)
+            val config = _appConfig.value
+            FirebaseSyncManager.syncSantri(getApplication(), config.firebaseUrl, config.firebaseEnabled, santri.copy(id = id.toInt()))
         }
     }
 
     fun updateSantri(santriId: Int, name: String, pin: String, gender: String) {
         viewModelScope.launch {
-            repository.updateSantri(Santri(id = santriId, name = name, pin = pin, gender = gender))
+            val santri = Santri(id = santriId, name = name, pin = pin, gender = gender)
+            repository.updateSantri(santri)
+            val config = _appConfig.value
+            FirebaseSyncManager.syncSantri(getApplication(), config.firebaseUrl, config.firebaseEnabled, santri)
         }
     }
 
@@ -338,21 +524,32 @@ class AlHidayahViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun createOrUpdatePeriod(id: Int = 0, name: String, startDate: String, endDate: String, isActive: Boolean) {
         viewModelScope.launch {
-            repository.savePeriod(
-                EvaluationPeriod(
-                    id = id,
-                    name = name,
-                    startDate = startDate,
-                    endDate = endDate,
-                    isActive = isActive
-                )
+            val period = EvaluationPeriod(
+                id = id,
+                name = name,
+                startDate = startDate,
+                endDate = endDate,
+                isActive = isActive
             )
+            val generatedId = repository.savePeriod(period)
+            val finalPeriod = if (id == 0) period.copy(id = generatedId.toInt()) else period
+            val config = _appConfig.value
+            FirebaseSyncManager.syncPeriod(getApplication(), config.firebaseUrl, config.firebaseEnabled, finalPeriod)
         }
     }
 
     fun activatePeriod(id: Int) {
         viewModelScope.launch {
             repository.activatePeriod(id)
+            // Sync all periods to update isActive statuses
+            val config = _appConfig.value
+            if (config.firebaseEnabled && config.firebaseUrl.isNotEmpty()) {
+                try {
+                    repository.allPeriods.firstOrNull()?.forEach {
+                        FirebaseSyncManager.syncPeriod(getApplication(), config.firebaseUrl, config.firebaseEnabled, it)
+                    }
+                } catch (e: Exception) {}
+            }
         }
     }
 
@@ -364,13 +561,18 @@ class AlHidayahViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun saveWeeklyReport(wr: WeeklyReport) {
         viewModelScope.launch {
-            repository.saveWeeklyReport(wr)
+            val generatedId = repository.saveWeeklyReport(wr)
+            val finalWr = if (wr.id == 0) wr.copy(id = generatedId.toInt()) else wr
+            val config = _appConfig.value
+            FirebaseSyncManager.syncWeeklyReport(getApplication(), config.firebaseUrl, config.firebaseEnabled, finalWr)
         }
     }
 
     fun updateWeeklyReport(wr: WeeklyReport) {
         viewModelScope.launch {
             repository.updateWeeklyReport(wr)
+            val config = _appConfig.value
+            FirebaseSyncManager.syncWeeklyReport(getApplication(), config.firebaseUrl, config.firebaseEnabled, wr)
         }
     }
 
@@ -519,5 +721,10 @@ class AlHidayahViewModel(application: Application) : AndroidViewModel(applicatio
         }
         
         return sb.toString()
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        FirebaseSyncManager.stopRealtimeSync()
     }
 }
